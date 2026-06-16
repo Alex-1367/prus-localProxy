@@ -1,10 +1,9 @@
-// server.cjs - Enhanced Local Proxy Server with Detailed Logging
+// server.cjs - Local Proxy Server with Full Logging (No CORS Restrictions)
 // Run with: node server.cjs
 
 require('dotenv').config();
 
 const express = require('express');
-const cors = require('cors');
 const axios = require('axios');
 const multer = require('multer');
 const path = require('path');
@@ -23,7 +22,7 @@ if (!API_KEY) {
 }
 
 console.log(`\n${'═'.repeat(60)}`);
-console.log(`🚀 PROPERTY MANAGER - LOCAL PROXY SERVER`);
+console.log(`🚀 PROPERTY MANAGER - LOCAL PROXY SERVER (NO CORS RESTRICTIONS)`);
 console.log(`${'═'.repeat(60)}`);
 console.log(`📋 Configuration:`);
 console.log(`   PORT: ${PORT}`);
@@ -32,14 +31,52 @@ console.log(`   API_KEY: ${API_KEY.substring(0, 10)}... (${API_KEY.length} chars
 console.log(`${'═'.repeat(60)}\n`);
 
 // ============================================
-// CORS Configuration
+// NO CORS RESTRICTIONS - Allow everything
 // ============================================
-app.use(cors({
-    origin: true,
-    credentials: true,
-    methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
-    allowedHeaders: ['Content-Type', 'x-api-key', 'Authorization', 'X-API-Key']
-}));
+app.use((req, res, next) => {
+    // Allow ANY origin - no restrictions
+    res.header('Access-Control-Allow-Origin', req.headers.origin || '*');
+    res.header('Access-Control-Allow-Methods', 'GET, POST, PUT, DELETE, OPTIONS, PATCH');
+    res.header('Access-Control-Allow-Headers', '*');  // Allow ANY headers
+    res.header('Access-Control-Allow-Credentials', 'true');
+    res.header('Access-Control-Max-Age', '86400');
+    
+    // Handle preflight immediately
+    if (req.method === 'OPTIONS') {
+        console.log(`[CORS] OPTIONS preflight for ${req.path} - returning 204`);
+        return res.sendStatus(204);
+    }
+    next();
+});
+
+// ============================================
+// GLOBAL REQUEST LOGGER - Logs EVERY request
+// ============================================
+app.use((req, res, next) => {
+    const requestId = Math.random().toString(36).substring(2, 8);
+    const timestamp = new Date().toISOString();
+    
+    console.log(`\n${'═'.repeat(60)}`);
+    console.log(`[${requestId}] [${timestamp}] 📍 INCOMING REQUEST`);
+    console.log(`[${requestId}] ┌─────────────────────────────────────────────────────────────`);
+    console.log(`[${requestId}] │ Method:     ${req.method}`);
+    console.log(`[${requestId}] │ Path:       ${req.path}`);
+    console.log(`[${requestId}] │ Full URL:   ${req.url}`);
+    console.log(`[${requestId}] │ Query:      ${JSON.stringify(req.query)}`);
+    console.log(`[${requestId}] │ Origin:     ${req.headers.origin || 'none'}`);
+    console.log(`[${requestId}] │ User-Agent: ${req.headers['user-agent']?.substring(0, 80) || 'unknown'}`);
+    console.log(`[${requestId}] │ IP:         ${req.ip || req.socket.remoteAddress}`);
+    console.log(`[${requestId}] │ Headers:    ${JSON.stringify(req.headers, null, 2).split('\n').join('\n' + ' ' * 14)}`);
+    
+    if (req.body && Object.keys(req.body).length > 0) {
+        console.log(`[${requestId}] │ Body:       ${JSON.stringify(req.body).substring(0, 200)}`);
+    }
+    
+    console.log(`[${requestId}] └─────────────────────────────────────────────────────────────`);
+    
+    req.requestId = requestId;
+    next();
+});
 
 app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
@@ -78,7 +115,7 @@ const upload = multer({
 // Health Check Endpoint
 // ============================================
 app.get('/health', (req, res) => {
-    console.log(`[${new Date().toISOString()}] HEALTH CHECK - OK`);
+    console.log(`[${req.requestId}] ✅ HEALTH CHECK`);
     res.json({ 
         success: true,
         status: 'ok', 
@@ -94,6 +131,7 @@ app.get('/health', (req, res) => {
 // Status Endpoint
 // ============================================
 app.get('/status', (req, res) => {
+    console.log(`[${req.requestId}] 📊 STATUS CHECK`);
     res.json({
         success: true,
         status: 'running',
@@ -106,6 +144,7 @@ app.get('/status', (req, res) => {
         endpoints: {
             health: 'GET /health',
             proxy: 'GET /proxy?url=...',
+            fetch: 'POST /fetch (HTML content)',
             upload: 'POST /upload',
             uploadBatch: 'POST /upload-batch',
             status: 'GET /status'
@@ -114,17 +153,93 @@ app.get('/status', (req, res) => {
 });
 
 // ============================================
+// FETCH ENDPOINT - Get HTML content (for detail scraper)
+// ============================================
+app.post('/fetch', express.json(), async (req, res) => {
+    const startTime = Date.now();
+    const { url } = req.body;
+    const requestId = req.requestId;
+    
+    console.log(`[${requestId}] 🌐 FETCH REQUEST (for detail scraper)`);
+    console.log(`[${requestId}] Target URL: ${url}`);
+    
+    if (!url) {
+        console.log(`[${requestId}] ❌ ERROR: Missing url parameter`);
+        return res.status(400).json({ error: 'url is required' });
+    }
+    
+    // Security: Only allow statusm.me domain
+    if (!url.includes('statusm.me')) {
+        console.log(`[${requestId}] ❌ BLOCKED: Only statusm.me domain is allowed (got: ${url})`);
+        return res.status(403).json({ error: 'Only statusm.me domain is allowed' });
+    }
+    
+    try {
+        console.log(`[${requestId}] 🔄 Fetching HTML from statusm.me...`);
+        
+        const response = await axios({
+            method: 'GET',
+            url: url,
+            headers: {
+                'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
+                'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8',
+                'Accept-Language': 'en-US,en;q=0.9',
+                'Referer': 'https://statusm.me/',
+            },
+            timeout: 30000,
+            responseType: 'text',
+            maxRedirects: 5
+        });
+        
+        const contentLength = response.data.length;
+        const elapsed = Date.now() - startTime;
+        
+        console.log(`[${requestId}] ✅ STATUS: ${response.status}`);
+        console.log(`[${requestId}] 📦 Content-Type: ${response.headers['content-type']}`);
+        console.log(`[${requestId}] 📏 Size: ${(contentLength / 1024).toFixed(2)} KB`);
+        console.log(`[${requestId}] ⏱️ Time: ${elapsed}ms`);
+        
+        res.json({
+            success: true,
+            html: response.data,
+            status: response.status,
+            contentType: response.headers['content-type'],
+            size: contentLength,
+            elapsedMs: elapsed
+        });
+        
+    } catch (error) {
+        const elapsed = Date.now() - startTime;
+        console.log(`[${requestId}] ❌ FETCH ERROR after ${elapsed}ms`);
+        
+        if (error.response) {
+            console.log(`[${requestId}]    Status: ${error.response.status}`);
+            console.log(`[${requestId}]    Status Text: ${error.response.statusText}`);
+        } else if (error.request) {
+            console.log(`[${requestId}]    No response received from statusm.me`);
+            console.log(`[${requestId}]    Error: ${error.message}`);
+        } else {
+            console.log(`[${requestId}]    Error: ${error.message}`);
+        }
+        
+        res.status(500).json({ 
+            success: false,
+            error: error.message,
+            requestId: requestId
+        });
+    }
+});
+
+// ============================================
 // PROXY ENDPOINT - Download image from statusm.me
 // ============================================
 app.get('/proxy', async (req, res) => {
     const startTime = Date.now();
     const targetUrl = req.query.url;
-    const requestId = Math.random().toString(36).substring(2, 8);
+    const requestId = req.requestId;
 
-    console.log(`\n${'─'.repeat(60)}`);
-    console.log(`[${requestId}] [${new Date().toISOString()}] 📥 PROXY REQUEST`);
-    console.log(`[${requestId}] URL: ${targetUrl}`);
-    console.log(`[${requestId}] Client IP: ${req.ip || req.socket.remoteAddress}`);
+    console.log(`[${requestId}] 🖼️ PROXY REQUEST (image download)`);
+    console.log(`[${requestId}] Target URL: ${targetUrl}`);
 
     if (!targetUrl) {
         console.log(`[${requestId}] ❌ ERROR: Missing url parameter`);
@@ -138,7 +253,7 @@ app.get('/proxy', async (req, res) => {
     }
 
     try {
-        console.log(`[${requestId}] 🔄 Fetching from statusm.me...`);
+        console.log(`[${requestId}] 🔄 Fetching image from statusm.me...`);
         
         const response = await axios({
             method: 'GET',
@@ -159,7 +274,7 @@ app.get('/proxy', async (req, res) => {
         console.log(`[${requestId}] ✅ STATUS: ${response.status}`);
         console.log(`[${requestId}] 📦 Content-Type: ${contentType}`);
         console.log(`[${requestId}] 📏 Size: ${contentLength ? (parseInt(contentLength) / 1024).toFixed(2) + ' KB' : 'unknown'}`);
-        console.log(`[${requestId}] ⏱️  Request time: ${Date.now() - startTime}ms`);
+        console.log(`[${requestId}] ⏱️ Request time: ${Date.now() - startTime}ms`);
 
         // Set response headers
         res.set('Content-Type', contentType);
@@ -173,7 +288,6 @@ app.get('/proxy', async (req, res) => {
         // Log when streaming completes
         response.data.on('end', () => {
             console.log(`[${requestId}] ✅ Stream completed. Total time: ${Date.now() - startTime}ms`);
-            console.log(`${'─'.repeat(60)}`);
         });
 
         response.data.on('error', (err) => {
@@ -194,8 +308,6 @@ app.get('/proxy', async (req, res) => {
             console.log(`[${requestId}]    Error: ${error.message}`);
         }
         
-        console.log(`${'─'.repeat(60)}`);
-        
         res.status(500).json({ 
             error: error.message,
             requestId: requestId
@@ -207,20 +319,18 @@ app.get('/proxy', async (req, res) => {
 // SINGLE UPLOAD ENDPOINT
 // ============================================
 app.post('/upload', upload.single('image'), async (req, res) => {
-    const requestId = Math.random().toString(36).substring(2, 8);
     const startTime = Date.now();
     const workerUrl = req.query.workerUrl || WORKER_URL;
     const apiKey = req.headers['x-api-key'] || req.headers['X-API-Key'] || API_KEY;
     const propertyId = req.body.propertyId;
     const imageIndex = req.body.imageIndex || 0;
+    const requestId = req.requestId;
 
-    console.log(`\n${'─'.repeat(60)}`);
-    console.log(`[${requestId}] [${new Date().toISOString()}] 📤 UPLOAD REQUEST`);
+    console.log(`[${requestId}] 📤 UPLOAD REQUEST`);
     console.log(`[${requestId}] Property ID: ${propertyId}`);
     console.log(`[${requestId}] Image Index: ${imageIndex}`);
     console.log(`[${requestId}] File: ${req.file?.originalname || 'none'}`);
     console.log(`[${requestId}] File Size: ${req.file?.size ? (req.file.size / 1024).toFixed(2) + ' KB' : 'unknown'}`);
-    console.log(`[${requestId}] Target Worker: ${workerUrl}`);
 
     if (!apiKey) {
         console.log(`[${requestId}] ❌ ERROR: API key is required`);
@@ -261,9 +371,7 @@ app.post('/upload', upload.single('image'), async (req, res) => {
         const totalTime = Date.now() - startTime;
         console.log(`[${requestId}] ✅ UPLOAD SUCCESS!`);
         console.log(`[${requestId}]    Cache Key: ${response.data.key}`);
-        console.log(`[${requestId}]    Status: ${response.data.status}`);
         console.log(`[${requestId}]    Total Time: ${totalTime}ms`);
-        console.log(`${'─'.repeat(60)}`);
 
         res.json(response.data);
 
@@ -276,10 +384,7 @@ app.post('/upload', upload.single('image'), async (req, res) => {
         
         if (error.response) {
             console.log(`[${requestId}]    Response status: ${error.response.status}`);
-            console.log(`[${requestId}]    Response data:`, error.response.data);
         }
-        
-        console.log(`${'─'.repeat(60)}`);
         
         res.status(500).json({ 
             error: error.message,
@@ -292,14 +397,13 @@ app.post('/upload', upload.single('image'), async (req, res) => {
 // BATCH UPLOAD ENDPOINT
 // ============================================
 app.post('/upload-batch', upload.array('images', 50), async (req, res) => {
-    const requestId = Math.random().toString(36).substring(2, 8);
     const startTime = Date.now();
     const workerUrl = req.query.workerUrl || WORKER_URL;
     const apiKey = req.headers['x-api-key'] || req.headers['X-API-Key'] || API_KEY;
     const propertyId = req.body.propertyId;
+    const requestId = req.requestId;
 
-    console.log(`\n${'─'.repeat(60)}`);
-    console.log(`[${requestId}] [${new Date().toISOString()}] 📦 BATCH UPLOAD REQUEST`);
+    console.log(`[${requestId}] 📦 BATCH UPLOAD REQUEST`);
     console.log(`[${requestId}] Property ID: ${propertyId}`);
     console.log(`[${requestId}] Files count: ${req.files?.length || 0}`);
 
@@ -355,7 +459,7 @@ app.post('/upload-batch', upload.array('images', 50), async (req, res) => {
                     timeMs: Date.now() - fileStartTime
                 });
                 successCount++;
-                console.log(`[${requestId}]   ✅ Success: ${response.data.key} (${Date.now() - fileStartTime}ms)`);
+                console.log(`[${requestId}]   ✅ Success: ${response.data.key}`);
                 
             } catch (err) {
                 results.push({
@@ -374,10 +478,7 @@ app.post('/upload-batch', upload.array('images', 50), async (req, res) => {
         }
 
         const totalTime = Date.now() - startTime;
-        console.log(`[${requestId}] ✅ BATCH COMPLETE`);
-        console.log(`[${requestId}]    Success: ${successCount}/${req.files.length}`);
-        console.log(`[${requestId}]    Total Time: ${totalTime}ms`);
-        console.log(`${'─'.repeat(60)}`);
+        console.log(`[${requestId}] ✅ BATCH COMPLETE: ${successCount}/${req.files.length} success, ${totalTime}ms`);
 
         res.json({
             success: true,
@@ -400,34 +501,56 @@ app.post('/upload-batch', upload.array('images', 50), async (req, res) => {
             }
         });
         
-        console.log(`${'─'.repeat(60)}`);
-        
         res.status(500).json({ error: error.message });
     }
 });
 
 // ============================================
+// 404 HANDLER - Catch all unmatched routes
+// ============================================
+app.use((req, res) => {
+    const requestId = req.requestId || Math.random().toString(36).substring(2, 8);
+    console.log(`[${requestId}] ❌ 404 NOT FOUND: ${req.method} ${req.path}`);
+    
+    res.status(404).json({
+        success: false,
+        error: 'Not Found',
+        path: req.path,
+        method: req.method,
+        timestamp: new Date().toISOString(),
+        requestId: requestId
+    });
+});
+
+// ============================================
 // Start Server
 // ============================================
-app.listen(PORT, () => {
+app.listen(PORT, '0.0.0.0', () => {
     console.log(`
 ╔═══════════════════════════════════════════════════════════════╗
 ║     PROPERTY MANAGER - LOCAL PROXY SERVER                     ║
-║     Version: 1.0.0                                            ║
+║     Version: 2.0 (NO CORS RESTRICTIONS)                       ║
 ║     Port: ${PORT}                                                  ║
 ║     Status: RUNNING ✅                                        ║
 ║     Worker URL: ${WORKER_URL}                                 ║
 ╠═══════════════════════════════════════════════════════════════╣
 ║  Endpoints:                                                   ║
 ║    GET  /health          - Health check                       ║
-║    GET  /proxy?url=...   - Download from statusm.me           ║
+║    GET  /status          - Server status                      ║
+║    GET  /proxy?url=...   - Download image                     ║
+║    POST /fetch           - Get HTML content (for detail page) ║
 ║    POST /upload          - Upload single image                ║
 ║    POST /upload-batch    - Upload multiple images             ║
-║    GET  /status          - Server status                      ║
+╠═══════════════════════════════════════════════════════════════╣
+║  CORS: FULLY OPEN - No restrictions                           ║
+║  Logging: EVERY request logged with full details              ║
 ╚═══════════════════════════════════════════════════════════════╝
 
 💡 Test the proxy:
    curl "http://localhost:${PORT}/proxy?url=https://statusm.me/wp-content/uploads/2025/01/status4.jpg" -o test.jpg
+
+💡 Test HTML fetch (for detail scraper):
+   curl -X POST http://localhost:${PORT}/fetch -H "Content-Type: application/json" -d '{"url":"https://statusm.me/sale/test-property"}'
 
 💡 Test health:
    curl http://localhost:${PORT}/health
