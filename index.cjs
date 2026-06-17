@@ -40,7 +40,7 @@ app.use((req, res, next) => {
     res.header('Access-Control-Allow-Headers', '*');  // Allow ANY headers
     res.header('Access-Control-Allow-Credentials', 'true');
     res.header('Access-Control-Max-Age', '86400');
-    
+
     // Handle preflight immediately
     if (req.method === 'OPTIONS') {
         console.log(`[CORS] OPTIONS preflight for ${req.path} - returning 204`);
@@ -55,7 +55,7 @@ app.use((req, res, next) => {
 app.use((req, res, next) => {
     const requestId = Math.random().toString(36).substring(2, 8);
     const timestamp = new Date().toISOString();
-    
+
     console.log(`\n${'═'.repeat(60)}`);
     console.log(`[${requestId}] [${timestamp}] 📍 INCOMING REQUEST`);
     console.log(`[${requestId}] ┌─────────────────────────────────────────────────────────────`);
@@ -67,13 +67,13 @@ app.use((req, res, next) => {
     console.log(`[${requestId}] │ User-Agent: ${req.headers['user-agent']?.substring(0, 80) || 'unknown'}`);
     console.log(`[${requestId}] │ IP:         ${req.ip || req.socket.remoteAddress}`);
     console.log(`[${requestId}] │ Headers:    ${JSON.stringify(req.headers, null, 2).split('\n').join('\n' + ' ' * 14)}`);
-    
+
     if (req.body && Object.keys(req.body).length > 0) {
         console.log(`[${requestId}] │ Body:       ${JSON.stringify(req.body).substring(0, 200)}`);
     }
-    
+
     console.log(`[${requestId}] └─────────────────────────────────────────────────────────────`);
-    
+
     req.requestId = requestId;
     next();
 });
@@ -98,7 +98,7 @@ const storage = multer.diskStorage({
     }
 });
 
-const upload = multer({ 
+const upload = multer({
     storage: storage,
     limits: { fileSize: 20 * 1024 * 1024 },
     fileFilter: (req, file, cb) => {
@@ -116,9 +116,9 @@ const upload = multer({
 // ============================================
 app.get('/health', (req, res) => {
     console.log(`[${req.requestId}] ✅ HEALTH CHECK`);
-    res.json({ 
+    res.json({
         success: true,
-        status: 'ok', 
+        status: 'ok',
         timestamp: new Date().toISOString(),
         server: 'property-manager-proxy',
         version: '1.0.0',
@@ -159,24 +159,24 @@ app.post('/fetch', express.json(), async (req, res) => {
     const startTime = Date.now();
     const { url } = req.body;
     const requestId = req.requestId;
-    
+
     console.log(`[${requestId}] 🌐 FETCH REQUEST (for detail scraper)`);
     console.log(`[${requestId}] Target URL: ${url}`);
-    
+
     if (!url) {
         console.log(`[${requestId}] ❌ ERROR: Missing url parameter`);
         return res.status(400).json({ error: 'url is required' });
     }
-    
+
     // Security: Only allow statusm.me domain
     if (!url.includes('statusm.me')) {
         console.log(`[${requestId}] ❌ BLOCKED: Only statusm.me domain is allowed (got: ${url})`);
         return res.status(403).json({ error: 'Only statusm.me domain is allowed' });
     }
-    
+
     try {
         console.log(`[${requestId}] 🔄 Fetching HTML from statusm.me...`);
-        
+
         const response = await axios({
             method: 'GET',
             url: url,
@@ -185,20 +185,21 @@ app.post('/fetch', express.json(), async (req, res) => {
                 'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8',
                 'Accept-Language': 'en-US,en;q=0.9',
                 'Referer': 'https://statusm.me/',
+                'Origin': 'https://statusm.me',
             },
             timeout: 30000,
             responseType: 'text',
             maxRedirects: 5
         });
-        
+
         const contentLength = response.data.length;
         const elapsed = Date.now() - startTime;
-        
+
         console.log(`[${requestId}] ✅ STATUS: ${response.status}`);
         console.log(`[${requestId}] 📦 Content-Type: ${response.headers['content-type']}`);
         console.log(`[${requestId}] 📏 Size: ${(contentLength / 1024).toFixed(2)} KB`);
         console.log(`[${requestId}] ⏱️ Time: ${elapsed}ms`);
-        
+
         res.json({
             success: true,
             html: response.data,
@@ -207,11 +208,11 @@ app.post('/fetch', express.json(), async (req, res) => {
             size: contentLength,
             elapsedMs: elapsed
         });
-        
+
     } catch (error) {
         const elapsed = Date.now() - startTime;
         console.log(`[${requestId}] ❌ FETCH ERROR after ${elapsed}ms`);
-        
+
         if (error.response) {
             console.log(`[${requestId}]    Status: ${error.response.status}`);
             console.log(`[${requestId}]    Status Text: ${error.response.statusText}`);
@@ -221,8 +222,8 @@ app.post('/fetch', express.json(), async (req, res) => {
         } else {
             console.log(`[${requestId}]    Error: ${error.message}`);
         }
-        
-        res.status(500).json({ 
+
+        res.status(500).json({
             success: false,
             error: error.message,
             requestId: requestId
@@ -254,15 +255,23 @@ app.get('/proxy', async (req, res) => {
 
     try {
         console.log(`[${requestId}] 🔄 Fetching image from statusm.me...`);
-        
+
         const response = await axios({
             method: 'GET',
             url: targetUrl,
             headers: {
-                'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
-                'Accept': 'image/webp,image/apng,image/*,*/*;q=0.8',
-                'Accept-Language': 'en-US,en;q=0.9',
+                'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:109.0) Gecko/20100101 Firefox/115.0',
+                'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8',
+                'Accept-Language': 'en-US,en;q=0.5',
+                'Accept-Encoding': 'gzip, deflate, br',
                 'Referer': 'https://statusm.me/',
+                'Origin': 'https://statusm.me',
+                'Connection': 'keep-alive',
+                'Sec-Fetch-Dest': 'image',
+                'Sec-Fetch-Mode': 'no-cors',
+                'Sec-Fetch-Site': 'same-origin',
+                'Cache-Control': 'no-cache',
+                'Pragma': 'no-cache'
             },
             timeout: 30000,
             responseType: 'stream'
@@ -297,7 +306,7 @@ app.get('/proxy', async (req, res) => {
     } catch (error) {
         const errorTime = Date.now() - startTime;
         console.log(`[${requestId}] ❌ PROXY ERROR after ${errorTime}ms`);
-        
+
         if (error.response) {
             console.log(`[${requestId}]    Status: ${error.response.status}`);
             console.log(`[${requestId}]    Status Text: ${error.response.statusText}`);
@@ -307,8 +316,8 @@ app.get('/proxy', async (req, res) => {
         } else {
             console.log(`[${requestId}]    Error: ${error.message}`);
         }
-        
-        res.status(500).json({ 
+
+        res.status(500).json({
             error: error.message,
             requestId: requestId
         });
@@ -377,18 +386,18 @@ app.post('/upload', upload.single('image'), async (req, res) => {
 
     } catch (error) {
         console.log(`[${requestId}] ❌ UPLOAD ERROR: ${error.message}`);
-        
+
         if (req.file && fs.existsSync(req.file.path)) {
             fs.unlinkSync(req.file.path);
         }
-        
+
         if (error.response) {
             console.log(`[${requestId}]    Response status: ${error.response.status}`);
         }
-        
-        res.status(500).json({ 
+
+        res.status(500).json({
             error: error.message,
-            details: error.response?.data 
+            details: error.response?.data
         });
     }
 });
@@ -432,7 +441,7 @@ app.post('/upload-batch', upload.array('images', 50), async (req, res) => {
         for (let i = 0; i < req.files.length; i++) {
             const file = req.files[i];
             const fileStartTime = Date.now();
-            
+
             console.log(`[${requestId}]   📸 [${i + 1}/${req.files.length}] ${file.originalname} (${(file.size / 1024).toFixed(2)} KB)`);
 
             const formData = new FormData();
@@ -450,7 +459,7 @@ app.post('/upload-batch', upload.array('images', 50), async (req, res) => {
                     maxContentLength: Infinity,
                     maxBodyLength: Infinity
                 });
-                
+
                 results.push({
                     index: i,
                     filename: file.originalname,
@@ -460,7 +469,7 @@ app.post('/upload-batch', upload.array('images', 50), async (req, res) => {
                 });
                 successCount++;
                 console.log(`[${requestId}]   ✅ Success: ${response.data.key}`);
-                
+
             } catch (err) {
                 results.push({
                     index: i,
@@ -471,7 +480,7 @@ app.post('/upload-batch', upload.array('images', 50), async (req, res) => {
                 failCount++;
                 console.log(`[${requestId}]   ❌ Failed: ${err.message}`);
             }
-            
+
             if (fs.existsSync(file.path)) {
                 fs.unlinkSync(file.path);
             }
@@ -494,13 +503,13 @@ app.post('/upload-batch', upload.array('images', 50), async (req, res) => {
 
     } catch (error) {
         console.log(`[${requestId}] ❌ BATCH ERROR: ${error.message}`);
-        
+
         req.files.forEach(file => {
             if (fs.existsSync(file.path)) {
                 fs.unlinkSync(file.path);
             }
         });
-        
+
         res.status(500).json({ error: error.message });
     }
 });
@@ -511,7 +520,7 @@ app.post('/upload-batch', upload.array('images', 50), async (req, res) => {
 app.use((req, res) => {
     const requestId = req.requestId || Math.random().toString(36).substring(2, 8);
     console.log(`[${requestId}] ❌ 404 NOT FOUND: ${req.method} ${req.path}`);
-    
+
     res.status(404).json({
         success: false,
         error: 'Not Found',
